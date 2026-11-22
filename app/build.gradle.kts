@@ -12,8 +12,8 @@ android {
         applicationId = "com.davidlg.iptvplayer.android"
         minSdk = 24
         targetSdk = 35
-        versionCode = 30
-        versionName = "5.14.1-register-screen-premium"
+        versionCode = 31
+        versionName = "5.14.2-register-icons-fix"
     }
 
     buildTypes {
@@ -39,6 +39,7 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.compose.material:material-icons-extended")
 
     val media3 = "1.5.0"
     implementation("androidx.media3:media3-exoplayer:$media3")

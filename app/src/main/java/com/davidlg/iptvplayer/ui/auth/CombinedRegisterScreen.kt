@@ -15,9 +15,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.outlined.Key
-import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.*
@@ -285,10 +282,10 @@ fun CombinedRegisterScreen(
                     visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                            Icon(
-                                imageVector = if (passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                                contentDescription = if (passwordVisible) "Ocultar contraseña" else "Mostrar contraseña",
-                                tint = Color(0xFFCBD5E1)
+                            Text(
+                                text = if (passwordVisible) "◉" else "◎",
+                                color = Color(0xFFCBD5E1),
+                                fontSize = 19.sp
                             )
                         }
                     },
@@ -339,10 +336,10 @@ fun CombinedRegisterScreen(
                             errorBorderColor = errorAccent,
                             containerColor = inputBg,
                             leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Outlined.Key,
-                                    contentDescription = null,
-                                    tint = cyanAccent
+                                Text(
+                                    text = "⌑",
+                                    color = cyanAccent,
+                                    fontSize = 20.sp
                                 )
                             },
                             keyboardOptions = KeyboardOptions(
