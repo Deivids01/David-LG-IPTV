@@ -12,8 +12,8 @@ android {
         applicationId = "com.davidlg.iptvplayer.android"
         minSdk = 24
         targetSdk = 35
-        versionCode = 29
-        versionName = "5.14.0-premium-auth-session-fix"
+        versionCode = 30
+        versionName = "5.14.1-register-screen-premium"
     }
 
     buildTypes {

@@ -46,6 +46,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.davidlg.iptvplayer.MainViewModel
+import com.davidlg.iptvplayer.BuildConfig
 
 private val Night = Color(0xFF070B16)
 private val Panel = Color(0xFF111A2C)
@@ -64,6 +65,23 @@ fun PanelLoginScreen(vm: MainViewModel) {
     var showPassword by rememberSaveable { mutableStateOf(false) }
     val busy by vm.panelBusy.collectAsState()
     val error by vm.panelError.collectAsState()
+
+    // La pantalla de registro usa el diseño nativo premium proporcionado,
+    // mientras que el inicio de sesión conserva la conexión existente al panel.
+    if (register) {
+        CombinedRegisterScreen(
+            versionLabel = "DAVIDLG IPTV PLAYER · ${BuildConfig.VERSION_NAME}",
+            serverError = error,
+            loading = busy,
+            onBackClick = { register = false; vm.panelError.value = "" },
+            onUseActivationCode = { },
+            onRegisterSubmit = { displayName, registerEmail, registerPassword, activation ->
+                vm.connectPanel(baseUrl, registerEmail, registerPassword, activation.orEmpty(), displayName, true)
+            },
+            onSwitchToLogin = { register = false; vm.panelError.value = "" }
+        )
+        return
+    }
 
     BoxWithConstraints(
         modifier = Modifier.fillMaxSize().background(
