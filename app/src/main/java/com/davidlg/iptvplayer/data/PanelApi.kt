@@ -7,6 +7,7 @@ import com.davidlg.iptvplayer.BuildConfig
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
 /** Cliente de la API pública del Panel DAVIDLG. No accede directamente a SQLite/MySQL. */
 class PanelApi(private val context: Context) {
@@ -128,8 +129,17 @@ class PanelApi(private val context: Context) {
         require(root.startsWith("https://", true) || root.startsWith("http://", true)) {
             "La dirección del panel debe comenzar con https:// o http://"
         }
-        val query = "r=$action"
-        val connection = (URL("$root?$query").openConnection() as HttpURLConnection).apply {
+        // En algunos hostings PHP/CGI no expone HTTP_AUTHORIZATION a PHP.
+        // Enviamos el token también como ?t= para ser compatibles con app.php,
+        // que admite ambos mecanismos. Se conserva Bearer como respaldo.
+        val separator = if (root.contains("?")) "&" else "?"
+        val query = buildString {
+            append("r=").append(URLEncoder.encode(action, "UTF-8"))
+            if (!token.isNullOrBlank()) {
+                append("&t=").append(URLEncoder.encode(token, "UTF-8"))
+            }
+        }
+        val connection = (URL("$root$separator$query").openConnection() as HttpURLConnection).apply {
             requestMethod = if (body == null) "GET" else "POST"
             connectTimeout = 15_000
             readTimeout = 30_000

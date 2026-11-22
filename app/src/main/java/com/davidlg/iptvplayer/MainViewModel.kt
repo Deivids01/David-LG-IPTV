@@ -226,8 +226,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             panelError.value = ""
             try {
                 val session = withContext(Dispatchers.IO) {
-                    if (register) panelApi.register(baseUrl, name, email, password)
+                    val created = if (register) panelApi.register(baseUrl, name, email, password)
                     else panelApi.login(baseUrl, email, password)
+                    // Confirmar que el token recién emitido realmente autentica
+                    // antes de guardarlo y cambiar a la pantalla de perfiles.
+                    panelApi.validateSession(baseUrl, created.token)
+                    created
                 }
                 prefs.savePanelSession(baseUrl, session.token, session.email.ifBlank { email })
                 panelAccount.value = session.email.ifBlank { session.userName }

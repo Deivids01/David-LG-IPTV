@@ -12,8 +12,8 @@ android {
         applicationId = "com.davidlg.iptvplayer.android"
         minSdk = 24
         targetSdk = 35
-        versionCode = 28
-        versionName = "5.13.5-nullable-panel-error-fix"
+        versionCode = 29
+        versionName = "5.14.0-premium-auth-session-fix"
     }
 
     buildTypes {
