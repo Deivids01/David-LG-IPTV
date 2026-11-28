@@ -80,7 +80,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 val remoteById = remote.associateBy { it.id }
                 val merged = local.map { p -> remoteById[p.id]?.let { p.copy(name = it.name, av = it.avatar, hasPin = it.hasPin) } ?: p }.toMutableList()
-                remote.filter { r -> merged.none { it.id == r.id } }.forEach { merged.add(Profile(r.id, r.name, r.avatar, r.hasPin)) }
+                remote.filter { r -> merged.none { it.id == r.id } }.forEach { r -> merged.add(Profile(r.id, r.name, r.avatar, r.hasPin)) }
                 merged.take(AppPrefs.MAX_PROFILES).forEach { p ->
                     if (remoteById[p.id] == null) withContext(Dispatchers.IO) { panelApi.saveRemoteProfile(base, token, p.id, p.name, p.av) }
                 }

@@ -69,7 +69,6 @@ fun SettingsScreen(vm: MainViewModel, onClose: () -> Unit) {
     var dialog by remember { mutableStateOf<Playlist?>(null) }
     var adding by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
-    var deviceCode by remember { mutableStateOf("") }
     BackHandler { if (adding || dialog != null || confirmClear) { adding = false; dialog = null; confirmClear = false } else onClose() }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0E1426), Color(0xFF070A14))))) {
@@ -218,6 +217,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.vod(vm: MainViewModel
 
 private fun androidx.compose.foundation.lazy.LazyListScope.sistema(vm: MainViewModel) {
     item {
+        var deviceCode by remember { mutableStateOf("") }
         val live by vm.live.collectAsState(); val v by vm.vod.collectAsState(); val st by vm.status.collectAsState(); val er by vm.errors.collectAsState()
         val panelOn by vm.panelConnected.collectAsState(); val panelUser by vm.panelAccount.collectAsState()
         Column(Modifier.padding(top = 20.dp)) {
