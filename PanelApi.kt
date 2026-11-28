@@ -13,7 +13,7 @@ import java.net.URLEncoder
 class PanelApi(private val context: Context) {
     data class Session(val token: String, val userName: String, val email: String)
     class PanelApiException(val code: String, val httpStatus: Int, message: String) : IllegalStateException(message)
-    data class Catalog(val channels: List<Channel>, val vod: List<Channel>)
+    data class Catalog(val channels: List<Channel>, val vod: List<Channel>, val epgUrls: List<Pair<String, String>> = emptyList())
 
     fun deviceId(): String = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
         ?.takeIf { it.isNotBlank() } ?: "android-${context.packageName}"
@@ -57,18 +57,24 @@ class PanelApi(private val context: Context) {
     }
 
     fun validateSession(baseUrl: String, token: String) {
-        val json = request(baseUrl, "me", null, token)
-        val user = json.optJSONObject("user")
-        val mode = user?.optString("block_mode", "none") ?: "none"
-        if (mode == "cloud") throw PanelApiException("cloud_block", 403, "El acceso al catálogo del panel está suspendido.")
-        if (user != null && !user.optBoolean("active", true)) throw PanelApiException("expired", 403, "Tu paquete venció o no tienes un paquete activo.")
+        request(baseUrl, "me", null, token)
+        // La autenticación de sesión no depende de la vigencia del paquete ni del bloqueo de catálogo.
+        // Así la cuenta puede entrar, canjear renovación y seguir usando fuentes locales;
+        // el endpoint content aplica cloud_block/expired al catálogo remoto.
     }
 
     fun content(baseUrl: String, token: String): Catalog {
         val json = request(baseUrl, "content", null, token)
         val channels = parseItems(json.optJSONArray("channels"), false)
         val vod = parseItems(json.optJSONArray("vod"), true)
-        return Catalog(channels, vod)
+        val epg = ArrayList<Pair<String, String>>()
+        val sources = json.optJSONArray("epg")
+        if (sources != null) for (i in 0 until sources.length()) {
+            val source = sources.optJSONObject(i) ?: continue
+            val url = source.optString("url").trim()
+            if (url.startsWith("http://", true) || url.startsWith("https://", true)) epg += ("panel_epg_${source.optString("id", i.toString())}" to url)
+        }
+        return Catalog(channels, vod, epg)
     }
 
     fun logout(baseUrl: String, token: String) { request(baseUrl, "logout", JSONObject(), token) }
@@ -86,6 +92,9 @@ class PanelApi(private val context: Context) {
             val key = drm.optString("key", "")
             val license = drm.optString("license", "")
             val props = linkedMapOf<String, String>()
+            listOf("media_type", "description", "poster", "backdrop", "year", "genre", "duration", "rating", "season", "episode", "series_id", "external_id").forEach { key ->
+                item.optString(key).takeIf { it.isNotBlank() }?.let { props[key] = it }
+            }
             when {
                 type.contains("widevine") -> {
                     props["inputstream.adaptive.manifest_type"] = "mpd"
@@ -109,7 +118,7 @@ class PanelApi(private val context: Context) {
                 id = "panel_$id",
                 number = index + 1,
                 name = name,
-                tvgId = "",
+                tvgId = item.optString("tvg_id", ""),
                 tvgName = name,
                 group = group,
                 logo = item.optString("logo", ""),

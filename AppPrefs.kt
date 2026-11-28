@@ -27,6 +27,8 @@ class AppPrefs(ctx: Context) {
         val PER_PROFILE = setOf(
             "recentChannels", "davidlgVodFavorites", "davidlgVodProgress", "davidlgVodMetadata",
             "vod_playback_history", "playbackPrefs", "davidlgVodSettings",
+            // Las fuentes y su selección pertenecen al perfil activo, no a toda la cuenta.
+            "iptvPlaylists", "activeIptvPlaylists", "iptvHomeSourceFilter",
         )
         const val REG = "davidlgProfiles"
         const val MAX_PROFILES = 5
@@ -36,7 +38,40 @@ class AppPrefs(ctx: Context) {
     var activeProfileId: String = "p1"
         private set
 
-    init { activeProfileId = loadRegistry().second }
+    init {
+        activeProfileId = loadRegistry().second
+        migrateLegacySharedPlaylists()
+    }
+
+    /**
+     * Migración compatible: en versiones anteriores las listas eran globales.
+     * Los perfiles que ya existían reciben una copia inicial para no perder acceso;
+     * desde esta versión cada copia evoluciona de forma independiente.
+     */
+    private fun migrateLegacySharedPlaylists() {
+        val legacyKeys = listOf("iptvPlaylists", "activeIptvPlaylists", "iptvHomeSourceFilter")
+        val existingProfiles = loadRegistry().first
+        val editor = sp.edit()
+        var changed = false
+        for (profile in existingProfiles) {
+            if (profile.id == "p1") continue
+            val prefix = "davidlgP:${profile.id}:"
+            for (legacyKey in legacyKeys) {
+                val scopedKey = prefix + legacyKey
+                if (!sp.contains(scopedKey) && sp.contains(legacyKey)) {
+                    when (val value = sp.all[legacyKey]) {
+                        is String -> editor.putString(scopedKey, value)
+                        is Int -> editor.putInt(scopedKey, value)
+                        is Boolean -> editor.putBoolean(scopedKey, value)
+                        is Long -> editor.putLong(scopedKey, value)
+                        is Float -> editor.putFloat(scopedKey, value)
+                    }
+                    changed = true
+                }
+            }
+        }
+        if (changed) editor.apply()
+    }
 
     private fun loadRegistry(): Pair<List<Profile>, String> {
         try {
@@ -88,9 +123,9 @@ class AppPrefs(ctx: Context) {
     fun getKv(k: String): JsonKv = JsonKv(getString(k, "{}").ifBlank { "{}" })
     fun putKv(k: String, kv: JsonKv) = putString(k, kv.raw)
 
-    // ---------- Listas (globales, no dependen del perfil) ----------
+    // ---------- Listas independientes por perfil ----------
     fun playlists(): List<Playlist> = try {
-        val a = JSONArray(sp.getString("iptvPlaylists", "[]"))
+        val a = JSONArray(getString("iptvPlaylists", "[]"))
         (0 until a.length()).map {
             val o = a.getJSONObject(it)
             Playlist(o.getString("id"), o.optString("name", "Lista"), o.getString("m3uUrl"), o.optString("epgUrl", ""), o.optString("contentType", "mixed"))
@@ -100,18 +135,18 @@ class AppPrefs(ctx: Context) {
     fun savePlaylists(list: List<Playlist>) {
         val a = JSONArray()
         for (p in list) a.put(JSONObject().put("id", p.id).put("name", p.name).put("m3uUrl", p.m3uUrl).put("epgUrl", p.epgUrl).put("contentType", p.contentType))
-        sp.edit().putString("iptvPlaylists", a.toString()).apply()
+        putString("iptvPlaylists", a.toString())
     }
 
     fun activeIds(): List<String> = try {
-        val a = JSONArray(sp.getString("activeIptvPlaylists", "[]"))
+        val a = JSONArray(getString("activeIptvPlaylists", "[]"))
         (0 until a.length()).map { a.getString(it) }
     } catch (_: Exception) { emptyList() }
 
-    fun saveActiveIds(ids: List<String>) { sp.edit().putString("activeIptvPlaylists", JSONArray(ids).toString()).apply() }
+    fun saveActiveIds(ids: List<String>) { putString("activeIptvPlaylists", JSONArray(ids).toString()) }
 
-    fun sourceFilter(): String = sp.getString("iptvHomeSourceFilter", "all") ?: "all"
-    fun saveSourceFilter(v: String) { sp.edit().putString("iptvHomeSourceFilter", v).apply() }
+    fun sourceFilter(): String = getString("iptvHomeSourceFilter", "all")
+    fun saveSourceFilter(v: String) { putString("iptvHomeSourceFilter", v) }
 
     // ---------- Recientes (por perfil) ----------
     fun recents(): List<String> = try {
@@ -130,5 +165,7 @@ class AppPrefs(ctx: Context) {
     }
     fun clearPanelSession() { sp.edit().remove("panelSessionToken").remove("panelEmail").apply() }
 
-    fun clearAllSources() { sp.edit().remove("iptvPlaylists").remove("activeIptvPlaylists").remove("iptvHomeSourceFilter").apply() }
+    fun clearAllSources() {
+        remove("iptvPlaylists"); remove("activeIptvPlaylists"); remove("iptvHomeSourceFilter")
+    }
 }

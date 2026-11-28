@@ -5,6 +5,7 @@ package com.davidlg.iptvplayer.player
 import android.content.Context
 import android.util.Base64
 import androidx.media3.common.C
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.datasource.DefaultDataSource
@@ -44,7 +45,18 @@ object PlaybackFactory {
                 }
             }.build()
         }
-        return ExoPlayer.Builder(ctx).setTrackSelector(selector).setLoadControl(load).build().apply { playWhenReady = true }
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+            .build()
+        return ExoPlayer.Builder(ctx).setTrackSelector(selector).setLoadControl(load).build().apply {
+            // Media3 negocia passthrough automáticamente con el AudioTrack/HDMI del dispositivo.
+            // La preferencia permite al usuario pedir salida directa; la disponibilidad real
+            // sigue dependiendo de códec, firmware, ruta HDMI y receptor AV.
+            setAudioAttributes(audioAttributes, true)
+            setHandleAudioBecomingNoisy(true)
+            playWhenReady = true
+        }
     }
 
     // ---------- Utilidades DRM (equivalentes a player.js de la versión web) ----------
@@ -129,8 +141,11 @@ object PlaybackFactory {
             (c.props["inputstream.adaptive.manifest_type"] ?: "").contains("hls", ignoreCase = true)
 
     /** Prepara y reproduce el canal en el reproductor dado. */
-    fun play(ctx: Context, player: ExoPlayer, c: Channel, startMs: Long = 0L) {
-        val ua = c.props["user_agent"]?.takeIf { it.isNotBlank() } ?: IptvRepository.UA
+    fun play(ctx: Context, player: ExoPlayer, c: Channel, startMs: Long = 0L, userAgentOverride: String = "") {
+        // Prioridad: User-Agent de la fuente > preferencia global del perfil > valor predeterminado.
+        val ua = c.props["user_agent"]?.takeIf { it.isNotBlank() }
+            ?: userAgentOverride.trim().takeIf { it.isNotBlank() }
+            ?: IptvRepository.UA
         val http = DefaultHttpDataSource.Factory()
             .setUserAgent(ua)
             .setAllowCrossProtocolRedirects(true)

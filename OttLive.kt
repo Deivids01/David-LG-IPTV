@@ -89,7 +89,12 @@ fun OttLive(vm: MainViewModel, initialSection: String = "channels") {
     val groups = remember(live) { live.groupBy { it.group.ifBlank { "Sin grupo" } } }
     val names = remember(groups) { listOf("TODOS") + groups.keys.toList() }
     var group by remember { mutableStateOf("TODOS") }
-    val list = remember(live, group) { if (group == "TODOS") live else groups[group].orEmpty() }
+    val hideWithoutEpg = playbackPrefs.str("hideNoEpg", "off") == "on"
+    val list = remember(live, group, epgVer, hideWithoutEpg) {
+        val grouped = if (group == "TODOS") live else groups[group].orEmpty()
+        if (hideWithoutEpg) grouped.filter { EpgStore.now(it) != null || EpgStore.schedule(it, System.currentTimeMillis(), System.currentTimeMillis() + 24 * 60 * 60_000L).isNotEmpty() }
+        else grouped
+    }
     val selectedId = vm.selectedLiveChannelId
     val cur = list.firstOrNull { it.id == selectedId } ?: list.firstOrNull()
     DisposableEffect(hostView, cur?.id) {
@@ -98,7 +103,7 @@ fun OttLive(vm: MainViewModel, initialSection: String = "channels") {
     }
     LaunchedEffect(cur?.id) { if (cur?.id != selectedId) vm.selectLiveChannel(cur) }
     LaunchedEffect(cur?.id, inlinePlayer, useShaka) {
-        if (cur != null && !useShaka) PlaybackFactory.play(context, inlinePlayer, cur, 0L)
+        if (cur != null && !useShaka) PlaybackFactory.play(context, inlinePlayer, cur, 0L, playbackPrefs.str("userAgent", ""))
         else inlinePlayer.stop()
     }
     val prog = remember(cur, epgVer) { cur?.let { EpgStore.now(it) } }

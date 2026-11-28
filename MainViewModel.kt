@@ -73,6 +73,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         prefs.setActiveProfile(id)
         activeProfile.value = profiles.value.first { it.id == id }
         refreshProfileState()
+        // Evitar que la guía del perfil anterior se muestre mientras carga la nueva.
+        EpgStore.clear()
+        // Reconstruir canales/EPG usando exclusivamente las fuentes del perfil seleccionado.
+        reload(false)
         ottTab = OttTab.Start
         screen = if (profileMode == "manage") returnTo else Screen.Main
         profileMode = "switch"
@@ -128,6 +132,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         vodSettings.value = prefs.getKv("davidlgVodSettings")
         playbackPrefs.value = prefs.getKv("playbackPrefs")
         recents.value = prefs.recents()
+        // Al cambiar de perfil, recargar sus listas IPTV, fuentes activas y filtro.
+        playlists.value = prefs.playlists()
+        activeIds.value = prefs.activeIds().ifEmpty { prefs.playlists().take(1).map { it.id } }
+        sourceFilter.value = prefs.sourceFilter().takeIf { it == "all" || playlists.value.any { p -> p.id == it } } ?: "all"
+        applyFilter()
         vodMetadataVersion++
     }
 
@@ -189,8 +198,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (panelMonitorJob?.isActive == true) return
         panelMonitorJob = viewModelScope.launch {
             var panelWasUnavailable = false
+            var monitorCycles = 0
             while (panelConnected.value) {
                 delay(120_000)
+                monitorCycles++
                 val token = prefs.panelToken()
                 if (token.isBlank()) continue
                 try {
@@ -198,6 +209,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (panelWasUnavailable) {
                         panelWasUnavailable = false
                         panelError.value = ""
+                        reload(false)
+                    } else if (monitorCycles % 3 == 0) {
+                        // Refresca el catálogo del panel cada ~6 minutos sin descargar listas locales innecesariamente.
                         reload(false)
                     }
                 } catch (e: Exception) {
@@ -269,6 +283,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val errs = ArrayList<String>()
             val liveAcc = ArrayList<Channel>()
             val vodAcc = ArrayList<Channel>()
+            var panelEpgUrls: List<Pair<String, String>> = emptyList()
             for (pl in pls) {
                 try {
                     val r = withContext(Dispatchers.IO) { repo.loadPlaylist(pl, force) }
@@ -287,6 +302,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val remote = withContext(Dispatchers.IO) { panelApi.content(prefs.panelBaseUrl(), panelToken) }
                     liveAcc.addAll(remote.channels)
                     vodAcc.addAll(remote.vod)
+                    panelEpgUrls = remote.epgUrls
+                    panelError.value = ""
                 } catch (e: Exception) {
                     stopPanelPlaybackIfNeeded()
                     val panelFailure = e as? PanelApi.PanelApiException
@@ -313,7 +330,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             errors.value = errs
             applyFilter()
             status.value = ""
-            loadEpg(force, pls)
+            loadEpg(force, pls, panelEpgUrls)
         }
     }
 
@@ -336,12 +353,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         setSourceFilter(opts[(i + 1) % opts.size])
     }
 
-    private fun loadEpg(force: Boolean, pls: List<Playlist>) {
+    private fun loadEpg(force: Boolean, pls: List<Playlist>, panelUrls: List<Pair<String, String>> = emptyList()) {
         viewModelScope.launch {
             val urls = pls.mapNotNull { pl ->
                 val u = pl.epgUrl.ifBlank { tvgByPlaylist[pl.id] ?: "" }
                 if (u.isBlank()) null else pl.id to u
-            }
+            } + panelUrls
             if (urls.isEmpty()) return@launch
             withContext(Dispatchers.IO) { repo.loadEpg(urls, force) }
         }

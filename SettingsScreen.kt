@@ -57,7 +57,7 @@ private val Gold = Color(0xFFE0C38A)
 private val Dim = Color(0xFF9AA3B8)
 private val Danger = Color(0xFFFF8A8A)
 
-private enum class Sec(val label: String) { Listas("Listas"), Reproductor("Reproductor"), Red("Red y búfer"), Epg("EPG"), Apariencia("Apariencia"), Vod("Catálogo VOD"), Sistema("Sistema") }
+private enum class Sec(val label: String) { Listas("Listas"), Reproductor("Reproductor"), Audio("Sonido"), Video("Video avanzado"), Red("Red y búfer"), Epg("EPG"), Apariencia("Apariencia"), Vod("Catálogo VOD"), Sistema("Sistema") }
 
 private typealias Opts = List<Pair<String, String>>
 
@@ -92,6 +92,8 @@ fun SettingsScreen(vm: MainViewModel, onClose: () -> Unit) {
                     when (sec) {
                         Sec.Listas -> listas(vm, { adding = true }, { dialog = it }, { confirmClear = true })
                         Sec.Reproductor -> reproductor(vm)
+                        Sec.Audio -> audio(vm)
+                        Sec.Video -> video(vm)
                         Sec.Red -> red(vm)
                         Sec.Epg -> epg(vm)
                         Sec.Apariencia -> apariencia(vm)
@@ -122,7 +124,9 @@ fun SettingsScreen(vm: MainViewModel, onClose: () -> Unit) {
                         when (sec) {
                             Sec.Listas -> listas(vm, { adding = true }, { dialog = it }, { confirmClear = true })
                             Sec.Reproductor -> reproductor(vm)
-                            Sec.Red -> red(vm)
+                            Sec.Audio -> audio(vm)
+                        Sec.Video -> video(vm)
+                        Sec.Red -> red(vm)
                             Sec.Epg -> epg(vm)
                             Sec.Apariencia -> apariencia(vm)
                             Sec.Vod -> vod(vm)
@@ -166,16 +170,33 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reproductor(vm: MainV
     item { OptRow(vm, false, "showBuffer", "Mostrar indicador de búfer", OnOff, "on") }
     item { OptRow(vm, false, "showStreamQuality", "Mostrar calidad real del flujo", OnOff, "on") }
     item { OptRow(vm, false, "zapDelayMs", "Retardo antes del cambio de canal", listOf("0" to "Instantáneo", "600" to "0.6 segundos", "1000" to "1 segundo", "2000" to "2 segundos", "3000" to "3 segundos", "4000" to "4 segundos", "5000" to "5 segundos", "6000" to "6 segundos", "8000" to "8 segundos", "10000" to "10 segundos", "15000" to "15 segundos", "20000" to "20 segundos", "25000" to "25 segundos", "30000" to "30 segundos"), "0") }
+    item { OptRow(vm, false, "matchFrameRate", "Igualar frecuencia de pantalla", OnOff, "off") }
+    item { Text("La igualación de frecuencia requiere soporte del sistema y de la pantalla. Media3 mantiene la frecuencia de origen cuando Android y el dispositivo permiten el cambio.", color = Dim, fontSize = 14.sp, fontFamily = Sans, modifier = androidx.compose.ui.Modifier.padding(vertical = 12.dp)) }
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.audio(vm: MainViewModel) {
+    item { OptRow(vm, false, "audio", "Idioma preferido de audio", listOf("auto" to "Automático", "es" to "Español", "en" to "Inglés"), "es") }
+    item { Text("Media3 negocia automáticamente los formatos de audio compatibles con Android y la ruta de salida. Atmos, E-AC3 JOC y TrueHD dependen del códec, firmware, televisor y receptor HDMI; esta versión no fuerza passthrough ni promete un formato no anunciado por el dispositivo.", color = Dim, fontSize = 14.sp, fontFamily = Sans, modifier = androidx.compose.ui.Modifier.padding(vertical = 16.dp)) }
+    item { Text("El retardo manual de audio y el control de audio espacial quedan pendientes de una implementación específica del AudioSink y de pruebas por dispositivo.", color = Dim, fontSize = 14.sp, fontFamily = Sans, modifier = androidx.compose.ui.Modifier.padding(bottom = 16.dp)) }
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.video(vm: MainViewModel) {
+    item { OptRow(vm, false, "matchFrameRate", "Igualar FPS / frecuencia de pantalla", OnOff, "off") }
+    item { Text("Escalado IA (Anime4K / FSR / NIS): no integrado en esta versión. Requiere un pipeline GPU o libmpv y pruebas de rendimiento por dispositivo; el escalado normal de Media3 sigue activo.", color = Dim, fontSize = 14.sp, fontFamily = Sans, modifier = androidx.compose.ui.Modifier.padding(vertical = 12.dp)) }
+    item { Text("Interpolación MEMC: no disponible mediante Media3 estándar. La interpolación debe realizarla el televisor o un motor especializado; no se mostrará como activada si no existe soporte real.", color = Dim, fontSize = 14.sp, fontFamily = Sans, modifier = androidx.compose.ui.Modifier.padding(bottom = 16.dp)) }
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.red(vm: MainViewModel) {
     item { OptRow(vm, false, "bufferMode", "Tamaño del búfer de emisión", listOf("low" to "Sin búfer adicional · mínimo práctico", "default" to "Predeterminado / proxy", "high" to "Aumentado"), "default") }
     item { OptRow(vm, false, "bitrateMode", "Selección de pista por bitrate", listOf("low" to "Bajo", "medium" to "Medio / adaptativo", "auto" to "Automático", "high" to "Alto"), "auto") }
+    item { UserAgentPref(vm) }
     item { Text("El modo reducido disminuye el búfer adicional, pero la reproducción siempre depende de los segmentos y de la red de origen.", color = Dim, fontSize = 18.sp, fontFamily = Sans, modifier = androidx.compose.ui.Modifier.padding(vertical = 16.dp)) }
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.epg(vm: MainViewModel) {
     item { OptRow(vm, false, "showEpgImages", "Imagen EPG en Inicio clásico", OnOff, "on") }
+    item { OptRow(vm, false, "hideNoEpg", "Ocultar canales sin programación EPG", OnOff, "off") }
+    item { Text("La guía se procesa en listas virtualizadas. Al activar esta opción, TV en vivo y la parrilla de OTT Nuevo ocultan canales sin programas disponibles en la guía cargada.", color = Dim, fontSize = 14.sp, fontFamily = Sans, modifier = androidx.compose.ui.Modifier.padding(vertical = 16.dp)) }
     item { Text("El arte EPG se utiliza únicamente en el cuadro principal de Inicio clásico, con el logo del canal superpuesto. La guía EPG conserva su parrilla sin imágenes de programas.", color = Dim, fontSize = 18.sp, fontFamily = Sans, modifier = androidx.compose.ui.Modifier.padding(vertical = 16.dp)) }
 }
 
@@ -269,6 +290,20 @@ private fun OptRow(vm: MainViewModel, vod: Boolean, key: String, label: String, 
                     },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun UserAgentPref(vm: MainViewModel) {
+    val st by vm.playbackPrefs.collectAsState()
+    var value by remember(st) { mutableStateOf(st.str("userAgent", "")) }
+    Column(Modifier.padding(vertical = 14.dp, horizontal = 12.dp)) {
+        Text("User-Agent personalizado", color = Color.White, fontSize = if (LocalConfiguration.current.screenWidthDp < 900) 18.sp else 32.sp, fontWeight = FontWeight.Bold, fontFamily = Sans)
+        Text("Se aplica a las solicitudes HTTP de reproducción. El User-Agent específico de cada lista tiene prioridad.", color = Dim, fontSize = if (LocalConfiguration.current.screenWidthDp < 900) 12.sp else 18.sp, fontFamily = Sans, modifier = Modifier.padding(top = 4.dp))
+        Field(value, "Vacío = User-Agent predeterminado") { value = it; vm.putPlaybackPref("userAgent", it) }
+        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Btn("Usar predeterminado", false) { value = ""; vm.putPlaybackPref("userAgent", "") }
         }
     }
 }
