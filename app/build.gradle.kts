@@ -12,8 +12,8 @@ android {
         applicationId = "com.davidlg.iptvplayer.android"
         minSdk = 24
         targetSdk = 35
-        versionCode = 37
-        versionName = "6.4.1-beta1-buildfix"
+        versionCode = 38
+        versionName = "6.4.2-beta1-settingsfix"
     }
 
     buildTypes {
