@@ -156,6 +156,10 @@ fun OttStart(vm: MainViewModel) {
 }
 
 private fun startKind(c: Channel): String {
+    val explicit = c.sourceMeta("media_type").lowercase()
+    if (explicit == "anime") return "anime"
+    if (explicit == "series" || explicit == "episode") return "series"
+    if (explicit == "movie") return "movie"
     val g = c.group.lowercase()
     return when {
         g.contains("anime") -> "anime"

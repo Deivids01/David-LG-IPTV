@@ -59,7 +59,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private enum class CTab(val label: String) { Live("TV en vivo"), Guide("Guía"), Vod("Películas y series"), Settings("Ajustes") }
+private enum class CTab(val label: String) { Live("TV en vivo"), Guide("EPG"), Vod("Películas y series"), Settings("Ajustes") }
 
 /** Modo clásico (azul, estilo TV tradicional). */
 @Composable
@@ -72,7 +72,7 @@ fun ClassicShell(vm: MainViewModel) {
     val ids by vm.activeIds.collectAsState()
     val src by vm.sourceFilter.collectAsState()
     var clock by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) { while (true) { clock = SimpleDateFormat(if (ClassicTimePrefs.use24h) "HH:mm" else "h:mm a", Locale("es", "MX")).format(Date()); delay(1000) } }
+    LaunchedEffect(Unit) { while (true) { clock = SimpleDateFormat(if (ClassicTimePrefs.use24h) "HH:mm:ss" else "h:mm:ss a", Locale("es", "MX")).format(Date()); delay(1000) } }
 
     val compact = LocalConfiguration.current.screenWidthDp < 900
     Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0B1E33), Color(0xFF070F1B), Color(0xFF050A12))))) {
@@ -325,7 +325,7 @@ private fun ClassicGuide(vm: MainViewModel, live: List<Channel>) {
 
     Column(Modifier.fillMaxSize().padding(horizontal = if (compact) 10.dp else if (medium) 20.dp else 30.dp, vertical = if (compact) 8.dp else 16.dp)) {
         Text(
-            "GUÍA DE PROGRAMACIÓN",
+            "GUÍA EPG",
             color = ClassicAcc,
             fontSize = if (compact) 19.sp else if (medium) 26.sp else 30.sp,
             fontWeight = FontWeight.Black,

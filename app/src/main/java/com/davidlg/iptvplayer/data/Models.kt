@@ -32,7 +32,7 @@ data class Program(
     val icon: String = "",
 )
 
-data class Profile(val id: String, val name: String, val av: Int)
+data class Profile(val id: String, val name: String, val av: Int, val hasPin: Boolean = false)
 
 
 /**

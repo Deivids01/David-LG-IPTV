@@ -1,5 +1,6 @@
 package com.davidlg.iptvplayer.ui.auth
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -38,6 +40,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
@@ -47,6 +51,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.davidlg.iptvplayer.MainViewModel
 import com.davidlg.iptvplayer.BuildConfig
+import android.graphics.Bitmap
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.MultiFormatWriter
 
 private val Night = Color(0xFF070B16)
 private val Panel = Color(0xFF111A2C)
@@ -63,6 +71,10 @@ fun PanelLoginScreen(vm: MainViewModel) {
     var register by rememberSaveable { mutableStateOf(false) }
     var code by rememberSaveable { mutableStateOf("") }
     var showPassword by rememberSaveable { mutableStateOf(false) }
+    val pairingCode = vm.pairingCode
+    val pairingStatus = vm.pairingStatus
+    val pairingBusy = vm.pairingBusy
+    val pairingBitmap = remember(pairingCode) { pairingCode.takeIf { it.isNotBlank() }?.let { createPairingQr(it) } }
     val busy by vm.panelBusy.collectAsState()
     val error by vm.panelError.collectAsState()
 
@@ -172,7 +184,20 @@ fun PanelLoginScreen(vm: MainViewModel) {
                         if (busy) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.height(21.dp))
                         else Text(if (register) "CREAR CUENTA Y CONTINUAR" else "INICIAR SESIÓN", fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
                     }
-                    Spacer(Modifier.height(18.dp))
+                    Spacer(Modifier.height(12.dp))
+                    TextButton(onClick = { if (pairingBusy) vm.cancelDevicePairing() else vm.startDevicePairing(baseUrl) }, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (pairingBusy) "Cancelar vinculación" else "Vincular este televisor con otro dispositivo", color = Cyan, fontSize = 13.sp)
+                    }
+                    if (pairingCode.isNotBlank()) {
+                        Surface(color = Color(0xFF071222), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Color(0x5535D5F2), RoundedCornerShape(16.dp))) {
+                            Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("ESCANEA O INTRODUCE EL CÓDIGO", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+                                pairingBitmap?.let { Image(bitmap = it.asImageBitmap(), contentDescription = "Código QR temporal para vincular el televisor", contentScale = ContentScale.Fit, modifier = Modifier.width(180.dp).height(180.dp).clip(RoundedCornerShape(10.dp))) }
+                                Text(pairingCode.chunked(5).joinToString(" "), color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 3.sp)
+                                Text(pairingStatus, color = Cyan, fontSize = 11.sp, lineHeight = 16.sp)
+                            }
+                        }
+                    }
                     Text("Tu cuenta funciona en tus dispositivos compatibles. También puedes usar tus propias listas locales sin contratar un paquete.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
                     Spacer(Modifier.height(8.dp))
                     Text("DAVIDLG IPTV PLAYER  •  EXPERIENCIA MULTIPANTALLA", color = Color(0xFF657994), fontSize = 9.sp, letterSpacing = 1.sp)
@@ -181,6 +206,18 @@ fun PanelLoginScreen(vm: MainViewModel) {
         }
     }
 }
+
+private fun createPairingQr(value: String): Bitmap? = runCatching {
+    val hints = mapOf(EncodeHintType.MARGIN to 1)
+    val matrix = MultiFormatWriter().encode(value, BarcodeFormat.QR_CODE, 420, 420, hints)
+    val pixels = IntArray(matrix.width * matrix.height)
+    for (y in 0 until matrix.height) for (x in 0 until matrix.width) {
+        pixels[y * matrix.width + x] = if (matrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE
+    }
+    Bitmap.createBitmap(matrix.width, matrix.height, Bitmap.Config.ARGB_8888).apply {
+        setPixels(pixels, 0, matrix.width, 0, 0, matrix.width, matrix.height)
+    }
+}.getOrNull()
 
 @Composable
 private fun BrandMark() {

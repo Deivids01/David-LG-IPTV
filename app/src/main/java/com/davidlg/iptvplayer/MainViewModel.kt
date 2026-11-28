@@ -39,6 +39,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var screen by mutableStateOf(if (prefs.panelToken().isBlank()) Screen.Login else Screen.AuthChecking)
     /** "launch" = al abrir la app (Atrás sale); "switch" = cambio de perfil desde dentro (Atrás vuelve). */
     var profileMode by mutableStateOf("launch")
+    var pinPromptProfile by mutableStateOf<Profile?>(null)
+    var pinBusy by mutableStateOf(false)
+    var pinError by mutableStateOf("")
+    var pairingCode by mutableStateOf("")
+    var pairingStatus by mutableStateOf("")
+    var pairingBusy by mutableStateOf(false)
     var ottTab by mutableStateOf(OttTab.Start)
     var pendingVodDetailsId by mutableStateOf<String?>(null)
         private set
@@ -63,16 +69,117 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun consumePendingVodDetails() { pendingVodDetailsId = null }
 
+    private suspend fun syncProfilesWithPanel() {
+        val base = prefs.panelBaseUrl(); val token = prefs.panelToken()
+        if (token.isBlank()) return
+        try {
+            val remote = withContext(Dispatchers.IO) { panelApi.remoteProfiles(base, token) }
+            val local = profiles.value
+            if (remote.isEmpty()) {
+                local.forEach { p -> withContext(Dispatchers.IO) { panelApi.saveRemoteProfile(base, token, p.id, p.name, p.av) } }
+            } else {
+                val remoteById = remote.associateBy { it.id }
+                val merged = local.map { p -> remoteById[p.id]?.let { p.copy(name = it.name, av = it.avatar, hasPin = it.hasPin) } ?: p }.toMutableList()
+                remote.filter { r -> merged.none { it.id == r.id } }.forEach { merged.add(Profile(r.id, r.name, r.avatar, r.hasPin)) }
+                merged.take(AppPrefs.MAX_PROFILES).forEach { p ->
+                    if (remoteById[p.id] == null) withContext(Dispatchers.IO) { panelApi.saveRemoteProfile(base, token, p.id, p.name, p.av) }
+                }
+                profiles.value = merged.take(AppPrefs.MAX_PROFILES)
+                val activeId = prefs.activeProfileId.takeIf { id -> profiles.value.any { it.id == id } } ?: profiles.value.first().id
+                prefs.saveProfiles(profiles.value, activeId)
+                activeProfile.value = profiles.value.first { it.id == activeId }
+            }
+            profiles.value.forEach { p ->
+                val (remoteState, revision) = withContext(Dispatchers.IO) { panelApi.readProfileState(base, token, p.id) }
+                if (revision > 0) prefs.importProfileState(p.id, remoteState)
+                else withContext(Dispatchers.IO) { panelApi.writeProfileState(base, token, p.id, prefs.exportProfileState(p.id), 0) }
+            }
+            refreshProfileState()
+        } catch (e: Exception) {
+            panelError.value = "No se pudieron sincronizar los perfiles: ${e.message ?: "error de conexión"}"
+        }
+    }
+
+    fun syncCurrentProfileToPanel() = syncProfileToPanel(prefs.activeProfileId)
+
+    private fun syncProfileToPanel(profileId: String) {
+        if (!panelConnected.value) return
+        viewModelScope.launch {
+            val base = prefs.panelBaseUrl(); val token = prefs.panelToken()
+            val p = profiles.value.firstOrNull { it.id == profileId } ?: return@launch
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    panelApi.saveRemoteProfile(base, token, p.id, p.name, p.av)
+                    val (_, revision) = panelApi.readProfileState(base, token, p.id)
+                    panelApi.writeProfileState(base, token, p.id, prefs.exportProfileState(p.id), revision)
+                }
+            }.onFailure { panelError.value = "No se pudo guardar el perfil en la nube: ${it.message}" }
+        }
+    }
+
     // ---------------- Perfiles ----------------
     val profiles = MutableStateFlow(prefs.profiles())
     val activeProfile = MutableStateFlow(profiles.value.first { it.id == prefs.activeProfileId })
 
     fun showProfileSwitcher() { profileMode = "switch"; screen = Screen.Profiles }
 
+    fun requestProfileSelection(id: String) {
+        val profile = profiles.value.firstOrNull { it.id == id } ?: return
+        if (profile.hasPin && id != prefs.activeProfileId) { pinPromptProfile = profile; pinError = "" }
+        else selectProfile(id)
+    }
+
+    fun verifyAndSelectProfile(pin: String) {
+        val profile = pinPromptProfile ?: return
+        viewModelScope.launch {
+            pinBusy = true; pinError = ""
+            try {
+                val ok = withContext(Dispatchers.IO) { panelApi.verifyProfilePin(prefs.panelBaseUrl(), prefs.panelToken(), profile.id, pin) }
+                if (ok) { pinPromptProfile = null; selectProfile(profile.id) } else pinError = "PIN incorrecto"
+            } catch (e: Exception) { pinError = e.message ?: "No se pudo verificar el PIN" }
+            finally { pinBusy = false }
+        }
+    }
+
+    fun setProfilePin(id: String, pin: String) {
+        if (pin.isBlank() || !panelConnected.value) return
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) {
+                val profile = profiles.value.firstOrNull { it.id == id } ?: return@withContext
+                panelApi.saveRemoteProfile(prefs.panelBaseUrl(), prefs.panelToken(), id, profile.name, profile.av)
+                panelApi.setProfilePin(prefs.panelBaseUrl(), prefs.panelToken(), id, pin)
+            } }
+                .onSuccess {
+                    profiles.value = profiles.value.map { if (it.id == id) it.copy(hasPin = true) else it }
+                    prefs.saveProfiles(profiles.value, prefs.activeProfileId)
+                    if (activeProfile.value.id == id) activeProfile.value = profiles.value.first { it.id == id }
+                }.onFailure { panelError.value = "No se pudo guardar el PIN: ${it.message}" }
+        }
+    }
+
+    fun removeProfilePin(id: String, pin: String) {
+        if (pin.isBlank() || !panelConnected.value) return
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { panelApi.removeProfilePin(prefs.panelBaseUrl(), prefs.panelToken(), id, pin) } }
+                .onSuccess {
+                    profiles.value = profiles.value.map { if (it.id == id) it.copy(hasPin = false) else it }
+                    prefs.saveProfiles(profiles.value, prefs.activeProfileId)
+                    if (activeProfile.value.id == id) activeProfile.value = profiles.value.first { it.id == id }
+                }.onFailure { panelError.value = "No se pudo quitar el PIN: ${it.message}" }
+        }
+    }
+
+    fun cancelPinPrompt() { pinPromptProfile = null; pinError = "" }
+
     fun selectProfile(id: String) {
         prefs.setActiveProfile(id)
+        syncProfileToPanel(id)
         activeProfile.value = profiles.value.first { it.id == id }
         refreshProfileState()
+        // Evitar que la guía del perfil anterior se muestre mientras carga la nueva.
+        EpgStore.clear()
+        // Reconstruir canales/EPG usando exclusivamente las fuentes del perfil seleccionado.
+        reload(false)
         ottTab = OttTab.Start
         screen = if (profileMode == "manage") returnTo else Screen.Main
         profileMode = "switch"
@@ -83,6 +190,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val id = "p" + UUID.randomUUID().toString().replace("-", "").take(12)
         profiles.value = profiles.value + Profile(id, name.ifBlank { "Perfil" }, av)
         prefs.saveProfiles(profiles.value, prefs.activeProfileId)
+        syncProfileToPanel(id)
         return true
     }
 
@@ -90,12 +198,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         profiles.value = profiles.value.map { if (it.id == id) it.copy(name = name.ifBlank { it.name }, av = av) else it }
         prefs.saveProfiles(profiles.value, prefs.activeProfileId)
         if (activeProfile.value.id == id) activeProfile.value = profiles.value.first { it.id == id }
+        syncProfileToPanel(id)
     }
 
     /** No se puede eliminar el último perfil. */
     fun deleteProfile(id: String): Boolean {
         if (profiles.value.size <= 1) return false
         prefs.purgeProfile(id)
+        if (panelConnected.value) viewModelScope.launch { withContext(Dispatchers.IO) { runCatching { panelApi.deleteRemoteProfile(prefs.panelBaseUrl(), prefs.panelToken(), id) } } }
         val left = profiles.value.filter { it.id != id }
         profiles.value = left
         val act = if (prefs.activeProfileId == id) left[0].id else prefs.activeProfileId
@@ -117,17 +227,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun putVodSetting(k: String, v: Any?) {
         val n = vodSettings.value.with(k, v)
         prefs.putKv("davidlgVodSettings", n); vodSettings.value = n
+        syncProfileToPanel(prefs.activeProfileId)
     }
 
     fun putPlaybackPref(k: String, v: Any?) {
         val n = playbackPrefs.value.with(k, v)
         prefs.putKv("playbackPrefs", n); playbackPrefs.value = n
+        syncProfileToPanel(prefs.activeProfileId)
     }
 
     private fun refreshProfileState() {
         vodSettings.value = prefs.getKv("davidlgVodSettings")
         playbackPrefs.value = prefs.getKv("playbackPrefs")
         recents.value = prefs.recents()
+        // Al cambiar de perfil, recargar sus listas IPTV, fuentes activas y filtro.
+        playlists.value = prefs.playlists()
+        activeIds.value = prefs.activeIds().ifEmpty { prefs.playlists().take(1).map { it.id } }
+        sourceFilter.value = prefs.sourceFilter().takeIf { it == "all" || playlists.value.any { p -> p.id == it } } ?: "all"
+        applyFilter()
         vodMetadataVersion++
     }
 
@@ -179,6 +296,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 if (screen == Screen.AuthChecking) screen = Screen.Profiles
+                syncProfilesWithPanel()
                 reload(false)
                 startPanelMonitor()
             }
@@ -189,8 +307,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (panelMonitorJob?.isActive == true) return
         panelMonitorJob = viewModelScope.launch {
             var panelWasUnavailable = false
+            var monitorCycles = 0
             while (panelConnected.value) {
                 delay(120_000)
+                monitorCycles++
                 val token = prefs.panelToken()
                 if (token.isBlank()) continue
                 try {
@@ -198,6 +318,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (panelWasUnavailable) {
                         panelWasUnavailable = false
                         panelError.value = ""
+                        reload(false)
+                    } else if (monitorCycles % 3 == 0) {
+                        // Refresca el catálogo del panel cada ~6 minutos sin descargar listas locales innecesariamente.
                         reload(false)
                     }
                 } catch (e: Exception) {
@@ -241,11 +364,55 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     try { withContext(Dispatchers.IO) { panelApi.redeem(baseUrl, session.token, activationCode) } }
                     catch (codeError: Exception) { panelError.value = codeError.message ?: "No se pudo canjear el código" }
                 }
+                syncProfilesWithPanel()
                 reload(true)
                 startPanelMonitor()
             } catch (e: Exception) {
                 panelError.value = e.message ?: "No se pudo conectar con el panel"
             } finally { panelBusy.value = false }
+        }
+    }
+
+    fun startDevicePairing(baseUrl: String = prefs.panelBaseUrl()) {
+        if (pairingBusy) return
+        viewModelScope.launch {
+            pairingBusy = true; pairingStatus = "Generando código seguro…"; pairingCode = ""
+            try {
+                val challenge = withContext(Dispatchers.IO) { panelApi.createQrChallenge(baseUrl) }
+                pairingCode = challenge.code
+                pairingStatus = "Introduce este código en un dispositivo donde ya hayas iniciado sesión."
+                while (System.currentTimeMillis() < challenge.expires && pairingBusy) {
+                    delay(2000)
+                    val result = withContext(Dispatchers.IO) { panelApi.pollQrChallenge(baseUrl, challenge.code) }
+                    when (result.status) {
+                        "authorized" -> {
+                            if (result.token.isBlank()) throw IllegalStateException("El panel no entregó el token del dispositivo vinculado")
+                            prefs.savePanelSession(baseUrl, result.token, result.email)
+                            panelAccount.value = result.email.ifBlank { result.userName }
+                            panelConnected.value = true
+                            pairingStatus = "Dispositivo vinculado correctamente"
+                            pairingBusy = false; screen = Screen.Profiles
+                            syncProfilesWithPanel(); reload(true); startPanelMonitor(); return@launch
+                        }
+                        "denied", "expired" -> throw IllegalStateException("El código venció o fue rechazado")
+                    }
+                }
+                if (pairingBusy) pairingStatus = "El código venció. Genera uno nuevo."
+            } catch (e: Exception) { pairingStatus = e.message ?: "No se pudo vincular el dispositivo" }
+            finally { pairingBusy = false }
+        }
+    }
+
+    fun cancelDevicePairing() { pairingBusy = false; pairingCode = ""; pairingStatus = "Vinculación cancelada" }
+
+    fun authorizeDeviceCode(code: String) {
+        viewModelScope.launch {
+            panelBusy.value = true; panelError.value = ""
+            try {
+                withContext(Dispatchers.IO) { panelApi.authorizeQr(prefs.panelBaseUrl(), prefs.panelToken(), code.trim().uppercase()) }
+                panelError.value = "Televisor autorizado. La pantalla se conectará automáticamente."
+            } catch (e: Exception) { panelError.value = e.message ?: "No se pudo autorizar el código" }
+            finally { panelBusy.value = false }
         }
     }
 
@@ -269,6 +436,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val errs = ArrayList<String>()
             val liveAcc = ArrayList<Channel>()
             val vodAcc = ArrayList<Channel>()
+            var panelEpgUrls: List<Pair<String, String>> = emptyList()
             for (pl in pls) {
                 try {
                     val r = withContext(Dispatchers.IO) { repo.loadPlaylist(pl, force) }
@@ -287,6 +455,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val remote = withContext(Dispatchers.IO) { panelApi.content(prefs.panelBaseUrl(), panelToken) }
                     liveAcc.addAll(remote.channels)
                     vodAcc.addAll(remote.vod)
+                    panelEpgUrls = remote.epgUrls
+                    panelError.value = ""
                 } catch (e: Exception) {
                     stopPanelPlaybackIfNeeded()
                     val panelFailure = e as? PanelApi.PanelApiException
@@ -313,7 +483,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             errors.value = errs
             applyFilter()
             status.value = ""
-            loadEpg(force, pls)
+            loadEpg(force, pls, panelEpgUrls)
         }
     }
 
@@ -327,7 +497,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setSourceFilter(id: String) {
-        sourceFilter.value = id; prefs.saveSourceFilter(id); applyFilter()
+        sourceFilter.value = id; prefs.saveSourceFilter(id); applyFilter(); syncProfileToPanel(prefs.activeProfileId)
     }
 
     fun cycleSource() {
@@ -336,12 +506,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         setSourceFilter(opts[(i + 1) % opts.size])
     }
 
-    private fun loadEpg(force: Boolean, pls: List<Playlist>) {
+    private fun loadEpg(force: Boolean, pls: List<Playlist>, panelUrls: List<Pair<String, String>> = emptyList()) {
         viewModelScope.launch {
             val urls = pls.mapNotNull { pl ->
                 val u = pl.epgUrl.ifBlank { tvgByPlaylist[pl.id] ?: "" }
                 if (u.isBlank()) null else pl.id to u
-            }
+            } + panelUrls
             if (urls.isEmpty()) return@launch
             withContext(Dispatchers.IO) { repo.loadEpg(urls, force) }
         }
@@ -351,12 +521,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         playlists.value = playlists.value + p
         prefs.savePlaylists(playlists.value)
         if (activeIds.value.size < AppPrefs.MAX_PROFILES) { activeIds.value = activeIds.value + p.id; prefs.saveActiveIds(activeIds.value) }
+        syncProfileToPanel(prefs.activeProfileId)
         reload(true)
     }
 
     fun updatePlaylist(p: Playlist) {
         playlists.value = playlists.value.map { if (it.id == p.id) p else it }
         prefs.savePlaylists(playlists.value)
+        syncProfileToPanel(prefs.activeProfileId)
         reload(true)
     }
 
@@ -365,6 +537,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         activeIds.value = activeIds.value.filter { it != id }
         prefs.savePlaylists(playlists.value); prefs.saveActiveIds(activeIds.value)
         if (sourceFilter.value == id) setSourceFilter("all")
+        syncProfileToPanel(prefs.activeProfileId)
         reload(false)
     }
 
@@ -373,12 +546,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val cur = activeIds.value
         activeIds.value = if (id in cur) cur.filter { it != id } else (cur + id).take(5)
         prefs.saveActiveIds(activeIds.value)
+        syncProfileToPanel(prefs.activeProfileId)
         reload(false)
     }
 
     fun clearAllSources() {
         prefs.clearAllSources(); repo.clearCache()
         playlists.value = emptyList(); activeIds.value = emptyList(); sourceFilter.value = "all"
+        syncProfileToPanel(prefs.activeProfileId)
         reload(false)
     }
 
@@ -390,6 +565,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val l = recents.value.toMutableList()
         l.remove(c.id); l.add(0, c.id)
         recents.value = l.take(30); prefs.saveRecents(recents.value)
+        syncProfileToPanel(prefs.activeProfileId)
     }
 
     fun recentChannels(): List<Channel> = recents.value.mapNotNull { byId[it] }.filter { !it.isVod }
@@ -476,6 +652,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         root.put(id, item)
         prefs.putString("davidlgVodMetadata", root.toString())
         vodMetadataVersion++
+        syncProfileToPanel(prefs.activeProfileId)
     }
 
     // ---------------- Progreso VOD (davidlgVodProgress) ----------------
@@ -484,5 +661,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val o = prefs.getKv("davidlgVodProgress").json()
         if (durMs > 0 && posMs > durMs * 0.95) o.remove(id) else o.put(id, posMs)
         prefs.putString("davidlgVodProgress", o.toString())
+        syncProfileToPanel(prefs.activeProfileId)
     }
 }

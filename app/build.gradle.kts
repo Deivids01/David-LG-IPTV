@@ -12,8 +12,8 @@ android {
         applicationId = "com.davidlg.iptvplayer.android"
         minSdk = 24
         targetSdk = 35
-        versionCode = 31
-        versionName = "5.14.2-register-icons-fix"
+        versionCode = 36
+        versionName = "6.4.0-beta1-panel-profiles"
     }
 
     buildTypes {
@@ -49,4 +49,5 @@ dependencies {
 
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("com.google.zxing:core:3.5.3")
 }

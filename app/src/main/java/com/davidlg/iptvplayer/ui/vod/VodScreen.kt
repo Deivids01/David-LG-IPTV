@@ -69,6 +69,10 @@ private val DeepPanel = Color(0xFF0D1929)
 private val SERIES_RX = Regex("\\bs\\d{1,2}\\s?e\\d{1,3}\\b|temporada|season|episodio", RegexOption.IGNORE_CASE)
 
 internal fun vodKind(c: Channel): String {
+    val explicit = c.sourceMeta("media_type").lowercase()
+    if (explicit == "anime") return "anime"
+    if (explicit == "series" || explicit == "episode") return "series"
+    if (explicit == "movie") return "movie"
     val g = c.group.lowercase()
     return when {
         g.contains("anime") -> "anime"
@@ -82,7 +86,7 @@ private fun readFavs(vm: MainViewModel): Set<String> = try {
     (0 until a.length()).map { a.getString(it) }.toSet()
 } catch (_: Exception) { emptySet() }
 
-private fun writeFavs(vm: MainViewModel, s: Set<String>) = vm.prefs.putString("davidlgVodFavorites", JSONArray(s.toList()).toString())
+private fun writeFavs(vm: MainViewModel, s: Set<String>) { vm.prefs.putString("davidlgVodFavorites", JSONArray(s.toList()).toString()); vm.syncCurrentProfileToPanel() }
 private fun localMeta(vm: MainViewModel, c: Channel, key: String, source: String): String =
     vm.vodMetadata(c.id).optString(key, "").takeIf { it.isNotBlank() } ?: source
 
@@ -113,7 +117,7 @@ fun VodScreen(vm: MainViewModel, tab: OttTab, classic: Boolean = false, onHome: 
                 OttTab.Anime -> vodKind(c) == "anime"
                 else -> c.id in favs
             }
-        }.filter { query.isBlank() || it.name.contains(query, true) || it.group.contains(query, true) }
+        }.filter { query.isBlank() || it.name.contains(query, true) || it.group.contains(query, true) || it.sourceSynopsis().contains(query, true) || it.sourceGenre().contains(query, true) }
     }
     val hero = filtered.firstOrNull()
     val rows = remember(filtered) { filtered.groupBy { it.group.ifBlank { "Para descubrir" } }.toList() }

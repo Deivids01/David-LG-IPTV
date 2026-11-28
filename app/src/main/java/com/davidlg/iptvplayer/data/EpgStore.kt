@@ -99,6 +99,13 @@ object EpgStore {
         return base - off
     }
 
+    /** Limpia la guía al cambiar de perfil para no mostrar programación de otra fuente. */
+    fun clear() {
+        programs = emptyMap()
+        names = emptyMap()
+        version.value = version.value + 1
+    }
+
     fun publish(parsed: Parsed) {
         val sorted = HashMap<String, List<Program>>()
         for ((k, v) in parsed.programs) {

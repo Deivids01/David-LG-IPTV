@@ -13,7 +13,10 @@ import java.net.URLEncoder
 class PanelApi(private val context: Context) {
     data class Session(val token: String, val userName: String, val email: String)
     class PanelApiException(val code: String, val httpStatus: Int, message: String) : IllegalStateException(message)
-    data class Catalog(val channels: List<Channel>, val vod: List<Channel>)
+    data class Catalog(val channels: List<Channel>, val vod: List<Channel>, val epgUrls: List<Pair<String, String>> = emptyList())
+    data class RemoteProfile(val id: String, val name: String, val avatar: Int, val hasPin: Boolean)
+    data class QrChallenge(val code: String, val expires: Long)
+    data class QrResult(val status: String, val token: String = "", val userName: String = "", val email: String = "")
 
     fun deviceId(): String = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
         ?.takeIf { it.isNotBlank() } ?: "android-${context.packageName}"
@@ -57,18 +60,73 @@ class PanelApi(private val context: Context) {
     }
 
     fun validateSession(baseUrl: String, token: String) {
-        val json = request(baseUrl, "me", null, token)
-        val user = json.optJSONObject("user")
-        val mode = user?.optString("block_mode", "none") ?: "none"
-        if (mode == "cloud") throw PanelApiException("cloud_block", 403, "El acceso al catálogo del panel está suspendido.")
-        if (user != null && !user.optBoolean("active", true)) throw PanelApiException("expired", 403, "Tu paquete venció o no tienes un paquete activo.")
+        request(baseUrl, "me", null, token)
+        // La autenticación de sesión no depende de la vigencia del paquete ni del bloqueo de catálogo.
+        // Así la cuenta puede entrar, canjear renovación y seguir usando fuentes locales;
+        // el endpoint content aplica cloud_block/expired al catálogo remoto.
     }
 
     fun content(baseUrl: String, token: String): Catalog {
         val json = request(baseUrl, "content", null, token)
         val channels = parseItems(json.optJSONArray("channels"), false)
         val vod = parseItems(json.optJSONArray("vod"), true)
-        return Catalog(channels, vod)
+        val epg = ArrayList<Pair<String, String>>()
+        val sources = json.optJSONArray("epg")
+        if (sources != null) for (i in 0 until sources.length()) {
+            val source = sources.optJSONObject(i) ?: continue
+            val url = source.optString("url").trim()
+            if (url.startsWith("http://", true) || url.startsWith("https://", true)) epg += ("panel_epg_${source.optString("id", i.toString())}" to url)
+        }
+        return Catalog(channels, vod, epg)
+    }
+
+    fun remoteProfiles(baseUrl: String, token: String): List<RemoteProfile> {
+        val a = request(baseUrl, "profiles", null, token).optJSONArray("profiles") ?: org.json.JSONArray()
+        return (0 until a.length()).mapNotNull { i -> a.optJSONObject(i)?.let { RemoteProfile(it.optString("id"), it.optString("name"), it.optInt("avatar"), it.optInt("has_pin") == 1 || it.optBoolean("has_pin")) } }
+    }
+
+    fun saveRemoteProfile(baseUrl: String, token: String, id: String, name: String, avatar: Int) {
+        request(baseUrl, "profiles", JSONObject().put("id", id).put("name", name).put("avatar", avatar), token)
+    }
+
+    fun deleteRemoteProfile(baseUrl: String, token: String, id: String) {
+        request(baseUrl, "profiles", JSONObject().put("id", id), token, "DELETE")
+    }
+
+    fun setProfilePin(baseUrl: String, token: String, id: String, pin: String) {
+        request(baseUrl, "profile_pin", JSONObject().put("profile_id", id).put("action", "set").put("pin", pin), token)
+    }
+
+    fun verifyProfilePin(baseUrl: String, token: String, id: String, pin: String): Boolean {
+        return request(baseUrl, "profile_pin", JSONObject().put("profile_id", id).put("action", "verify").put("pin", pin), token).optBoolean("verified", true)
+    }
+
+    fun removeProfilePin(baseUrl: String, token: String, id: String, pin: String) {
+        request(baseUrl, "profile_pin", JSONObject().put("profile_id", id).put("action", "remove").put("pin", pin), token)
+    }
+
+    fun readProfileState(baseUrl: String, token: String, id: String): Pair<JSONObject, Int> {
+        val j = request(baseUrl, "profile_state", null, token, extraQuery = mapOf("profile_id" to id))
+        return (j.optJSONObject("state") ?: JSONObject()) to j.optInt("revision")
+    }
+
+    fun writeProfileState(baseUrl: String, token: String, id: String, state: JSONObject, revision: Int): Int {
+        return request(baseUrl, "profile_state", JSONObject().put("profile_id", id).put("state", state).put("revision", revision), token).optInt("revision", revision + 1)
+    }
+
+    fun createQrChallenge(baseUrl: String): QrChallenge {
+        val j = request(baseUrl, "qr_create", devicePayload(), null)
+        return QrChallenge(j.optString("code"), j.optLong("expires"))
+    }
+
+    fun authorizeQr(baseUrl: String, token: String, code: String) {
+        request(baseUrl, "qr_authorize", JSONObject().put("code", code), token)
+    }
+
+    fun pollQrChallenge(baseUrl: String, code: String): QrResult {
+        val j = request(baseUrl, "qr_status", null, null, extraQuery = mapOf("code" to code))
+        val user = j.optJSONObject("user") ?: JSONObject()
+        return QrResult(j.optString("status"), j.optString("token"), user.optString("name"), user.optString("email"))
     }
 
     fun logout(baseUrl: String, token: String) { request(baseUrl, "logout", JSONObject(), token) }
@@ -86,6 +144,9 @@ class PanelApi(private val context: Context) {
             val key = drm.optString("key", "")
             val license = drm.optString("license", "")
             val props = linkedMapOf<String, String>()
+            listOf("media_type", "description", "poster", "backdrop", "year", "genre", "duration", "rating", "season", "episode", "series_id", "external_id").forEach { key ->
+                item.optString(key).takeIf { it.isNotBlank() }?.let { props[key] = it }
+            }
             when {
                 type.contains("widevine") -> {
                     props["inputstream.adaptive.manifest_type"] = "mpd"
@@ -109,7 +170,7 @@ class PanelApi(private val context: Context) {
                 id = "panel_$id",
                 number = index + 1,
                 name = name,
-                tvgId = "",
+                tvgId = item.optString("tvg_id", ""),
                 tvgName = name,
                 group = group,
                 logo = item.optString("logo", ""),
@@ -123,7 +184,7 @@ class PanelApi(private val context: Context) {
         return result.filter { it.url.isNotBlank() }
     }
 
-    private fun request(baseUrl: String, action: String, body: JSONObject?, token: String?): JSONObject {
+    private fun request(baseUrl: String, action: String, body: JSONObject?, token: String?, httpMethod: String? = null, extraQuery: Map<String, String> = emptyMap()): JSONObject {
         var root = baseUrl.trim().trimEnd('/')
         if (!root.substringAfterLast('/').contains(".php", ignoreCase = true)) root += "/app.php"
         require(root.startsWith("https://", true) || root.startsWith("http://", true)) {
@@ -135,12 +196,13 @@ class PanelApi(private val context: Context) {
         val separator = if (root.contains("?")) "&" else "?"
         val query = buildString {
             append("r=").append(URLEncoder.encode(action, "UTF-8"))
+            extraQuery.forEach { (k, v) -> append("&").append(URLEncoder.encode(k, "UTF-8")).append("=").append(URLEncoder.encode(v, "UTF-8")) }
             if (!token.isNullOrBlank()) {
                 append("&t=").append(URLEncoder.encode(token, "UTF-8"))
             }
         }
         val connection = (URL("$root$separator$query").openConnection() as HttpURLConnection).apply {
-            requestMethod = if (body == null) "GET" else "POST"
+            requestMethod = httpMethod ?: if (body == null) "GET" else "POST"
             connectTimeout = 15_000
             readTimeout = 30_000
             setRequestProperty("Accept", "application/json")

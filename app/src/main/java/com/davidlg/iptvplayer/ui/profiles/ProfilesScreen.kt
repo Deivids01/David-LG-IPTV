@@ -129,8 +129,8 @@ fun ProfilesScreen(vm: MainViewModel) {
                         if (p.id == active.id) Modifier.focusRequester(firstFocus) else Modifier, compact,
                     ) {
                         if (manage) dialog = PfDialog.Edit(p)
-                        else if (p.id == active.id) vm.selectProfile(p.id)
-                        else { leaving = true; vm.selectProfile(p.id) }
+                        else if (p.id == active.id) vm.requestProfileSelection(p.id)
+                        else { leaving = true; vm.requestProfileSelection(p.id) }
                     }
                 }
                 if (profiles.size < AppPrefs.MAX_PROFILES) PfAddCard(compact) { dialog = PfDialog.Edit(null) }
@@ -176,6 +176,21 @@ fun ProfilesScreen(vm: MainViewModel) {
                             onCancel = { dialog = null },
                             onDelete = { vm.deleteProfile(d.p.id); dialog = null; toast = "Perfil eliminado" },
                         )
+                    }
+                }
+            }
+        }
+        vm.pinPromptProfile?.let { target ->
+            var pin by remember(target.id) { mutableStateOf("") }
+            Dialog(onDismissRequest = { vm.cancelPinPrompt() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+                Column(Modifier.fillMaxWidth(.9f).widthIn(max = 460.dp).clip(RoundedCornerShape(22.dp)).background(Color(0xFF10151C)).padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Perfil protegido", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text("Introduce el PIN de ${target.name}", color = PfDim, fontSize = 14.sp)
+                    androidx.compose.material3.OutlinedTextField(value = pin, onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) pin = it }, label = { Text("PIN de 4 a 6 dígitos") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword), modifier = Modifier.fillMaxWidth())
+                    if (vm.pinError.isNotBlank()) Text(vm.pinError, color = Color(0xFFFF8D8D), fontSize = 13.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        PfButton(if (vm.pinBusy) "Verificando…" else "Continuar", "pri", Modifier.weight(1f)) { if (pin.length >= 4 && !vm.pinBusy) vm.verifyAndSelectProfile(pin) }
+                        PfButton("Cancelar", "", Modifier.weight(1f)) { vm.cancelPinPrompt() }
                     }
                 }
             }
@@ -288,6 +303,8 @@ private fun EditDialog(
     val compact = config.screenWidthDp < 900
     var name by remember { mutableStateOf(p?.name ?: "") }
     var av by remember { mutableStateOf(p?.av ?: (all.size % PROFILE_AVATAR_COUNT)) }
+    var profilePin by remember(p?.id) { mutableStateOf("") }
+    var oldProfilePin by remember(p?.id) { mutableStateOf("") }
     val active by vm.activeProfile.collectAsState()
     val canDelete = p != null && all.size > 1
     val note = "El último perfil disponible no se puede eliminar."
@@ -379,6 +396,30 @@ private fun EditDialog(
                         }
                     }
                 }
+                Text("PIN PARENTAL", color = PfDim, fontSize = if (compact) 12.sp else 23.sp, fontWeight = FontWeight.Bold, fontFamily = Sans, modifier = Modifier.padding(top = 16.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = profilePin,
+                    onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) profilePin = it },
+                    label = { Text(if (p?.hasPin == true) "Nuevo PIN (opcional)" else "Crear PIN (opcional)") },
+                    singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(if (p?.hasPin == true) "El perfil ya está protegido. Si escribes otro PIN, se reemplazará." else "Protege este perfil con un PIN de 4 a 6 dígitos.", color = PfDim, fontSize = if (compact) 10.sp else 16.sp)
+                if (p?.hasPin == true) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = oldProfilePin, onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) oldProfilePin = it },
+                        label = { Text("PIN actual para quitar la protección") }, singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    PfButton("Quitar PIN parental", "danger", Modifier.fillMaxWidth()) {
+                        if (oldProfilePin.length in 4..6) { vm.removeProfilePin(p.id, oldProfilePin); onDone() }
+                        else onToast("Introduce el PIN actual de 4 a 6 dígitos")
+                    }
+                }
             }
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(if (compact) 7.dp else 10.dp)) {
                 Row(
@@ -393,8 +434,16 @@ private fun EditDialog(
                             n.isEmpty() -> onToast("Escribe un nombre para el perfil")
                             all.any { it.id != p?.id && it.name.equals(n, ignoreCase = true) } -> onToast("Ya existe un perfil con ese nombre")
                             else -> {
-                                if (p != null) { vm.editProfile(p.id, n, av); onDone() }
-                                else if (vm.addProfile(n, av)) { onToast("Perfil creado"); onDone() }
+                                if (profilePin.isNotEmpty() && profilePin.length !in 4..6) onToast("El PIN debe tener entre 4 y 6 dígitos")
+                                else if (p != null) {
+                                    vm.editProfile(p.id, n, av)
+                                    if (profilePin.isNotEmpty()) vm.setProfilePin(p.id, profilePin)
+                                    onDone()
+                                }
+                                else if (vm.addProfile(n, av)) {
+                                    if (profilePin.isNotEmpty()) vm.profiles.value.lastOrNull()?.let { vm.setProfilePin(it.id, profilePin) }
+                                    onToast("Perfil creado"); onDone()
+                                }
                                 else onToast("No se pudo crear el perfil. Comprueba el límite de perfiles.")
                             }
                         }

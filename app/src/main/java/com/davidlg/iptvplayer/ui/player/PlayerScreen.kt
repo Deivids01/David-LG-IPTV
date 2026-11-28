@@ -3,6 +3,9 @@
 package com.davidlg.iptvplayer.ui.player
 
 import android.view.ViewGroup
+import android.view.Surface
+import android.view.SurfaceView
+import android.os.Build
 import android.util.Base64
 import android.util.Log
 import android.net.Uri
@@ -352,7 +355,7 @@ fun PlayerScreen(vm: MainViewModel) {
         if (c != null) {
             error = null; buffering = true; streamQuality = "—"
             vm.markWatched(c)
-            if (!useShaka) PlaybackFactory.play(ctx, player, c, vm.startPositionMs) else player.stop()
+            if (!useShaka) PlaybackFactory.play(ctx, player, c, vm.startPositionMs, pp.str("userAgent", "")) else player.stop()
             vm.startPositionMs = 0L
             show()
         }
@@ -451,6 +454,22 @@ fun PlayerScreen(vm: MainViewModel) {
                 modifier = Modifier.fillMaxSize(),
                 update = { view ->
                     if (view.player !== player) view.player = player
+                    // Solicita a Android la frecuencia nativa del stream cuando el usuario
+                    // activa la igualación y la Surface/firmware ofrecen la API.
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        val surfaceView = view.videoSurfaceView as? SurfaceView
+                        val surface = surfaceView?.holder?.surface
+                        val fps = player.videoFormat?.frameRate ?: 0f
+                        if (surface?.isValid == true) {
+                            runCatching {
+                                if (pp.str("matchFrameRate", "off") == "on" && fps.isFinite() && fps in 10f..120f) {
+                                    surface.setFrameRate(fps, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
+                                } else {
+                                    surface.setFrameRate(0f, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT)
+                                }
+                            }
+                        }
+                    }
                     view.resizeMode = when (pp.str("aspectRatio", "fit")) {
                         "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
                         "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
