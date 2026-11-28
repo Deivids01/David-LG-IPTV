@@ -1,6 +1,13 @@
-# DAVIDLG IPTV Player 6.4.0 Beta 1 — integración ampliada con panel PHP + SQLite
+# DAVIDLG IPTV Player 6.4.1 Beta 1 — corrección de compilación
 
-## Integración de cuenta y panel
+## Correcciones aplicadas a partir del registro de compilación
+- Eliminada la copia duplicada `app/src/main/java/com/SettingsScreen.kt`; se conserva la pantalla oficial `ui/settings/SettingsScreen.kt`.
+- Corregido el alcance de la variable `r` al incorporar perfiles remotos en `MainViewModel`.
+- Añadidos los imports de `Channel.sourceMeta` en OTT Inicio y VOD.
+- Movido el estado `deviceCode` al bloque composable de Ajustes del panel, donde se utiliza.
+- Incrementado `versionCode` a 37 y actualizado `versionName` a `6.4.1-beta1-buildfix`.
+
+## Funciones incluidas
 - Se conserva PHP + SQLite como backend único; la app consume exclusivamente la API HTTP del panel.
 - El panel conserva `data/panel.sqlite` y aplica migraciones aditivas (`CREATE TABLE IF NOT EXISTS` / `ALTER TABLE` condicional).
 - Perfiles remotos por cuenta, límite de cinco perfiles y sincronización de los metadatos de perfil.
